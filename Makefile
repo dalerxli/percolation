@@ -1,2 +1,2 @@
 all:
-	g++ -std=c++11 -o 3d 1.cpp
+	g++ -std=c++11 -o wires 2.cpp

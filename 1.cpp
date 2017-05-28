@@ -6,6 +6,9 @@
 #include <unordered_map>
 #include <functional>
 #include <armadillo>
+#include <Eigen/Sparse>
+#include <cstdlib>
+#include <cstring>
 using namespace std;
 
 
@@ -46,6 +49,11 @@ template<typename T> void simple_fill2d(vector<vector<T>>& material, double dens
 		_ones += (d0t == OCCUPIED);
 	}
 //	cout << _ones << ' ';
+}
+
+void fill2d(vector<vector<int>>& material, double occ, int E) {
+	int N = material.size() * material[0].size() * (occ / E);
+	fill2d(material, N, E);
 }
 
 void fill2d(vector<vector<int>>& material, int N, int E) {
@@ -283,7 +291,7 @@ hash_graph2d make_graph2d(vector<vector<int>>& material) {
 		if(material[0][x] == OCCUPIED) {
 			auto p = point2d{x,0};
 			next.insert(p);
-			add_edge2d(graph, start_point, p, 1);
+			add_edge2d(graph, start_point, p, 1e9);
 		}
 	}
 	
@@ -302,7 +310,7 @@ hash_graph2d make_graph2d(vector<vector<int>>& material) {
 		//link last layer with end_point
 		for(const point2d &p : next) {
 			if(p.y == Yborder) {
-				add_edge2d(graph, end_point, p, 1);
+				add_edge2d(graph, end_point, p, 1e9);
 			}
 		}
 		next = std::move(next2);
@@ -384,6 +392,40 @@ pair<vector<vector<double>>,point2d_namer>  laplacian_matrix2d(const hash_graph2
 	}
 	return make_pair(matrix,names);
 }
+using namespace Eigen;
+pair<vector<Triplet<double>>, point2d_namer> laplacian_matrix2d_Eigen(const hash_graph2d & bad_graph) {
+	point2d_namer names;
+	unordered_map<int, point2d> rev_names;
+	vector<unordered_map<int,double>> graph;
+	int i = 0;
+	for(const auto& p : bad_graph) {
+		names[p.first] = i;
+		rev_names[i] = p.first;		
+		++i;
+	}
+	int M = i;
+
+	graph.resize(M);
+	for(const auto& p : bad_graph) {
+		unordered_map<int, double> &es = graph[names[p.first]];
+		for(const auto& vs : p.second) {
+			es[names[vs.first]] = vs.second;
+		}
+	}
+	vector<Triplet<double>> cr;
+	for(int i = 0; i < M; i++) {
+		double mii = 0;
+		for(const auto &e : graph[i]) mii += e.second;
+		cr.push_back(Triplet<double>(i,i,mii));
+	}
+	
+	for(int i = 0; i < M; i++) {
+		for(auto p : graph[i]) {
+			cr.push_back(Triplet<double>(i,p.first, -p.second));
+		}
+	}
+	return make_pair(cr, names);
+}
 
 double resistance(vector<vector<double>> _K, int from, int to, bool sparse = false) {
 	int M = _K.size();
@@ -394,7 +436,7 @@ double resistance(vector<vector<double>> _K, int from, int to, bool sparse = fal
 			K2.at(i,j) = _K[i][j];
 		}
 	}
-	cout <<M << ' ' << from << ' ' << to << endl;
+	//cout <<M << ' ' << from << ' ' << to << endl;
 	K1.shed_row(from);
 	K1.shed_col(to);
 	K2.shed_row(max(from,to));
@@ -404,6 +446,44 @@ double resistance(vector<vector<double>> _K, int from, int to, bool sparse = fal
 	return abs(arma::det(K2) / arma::det(K1));
 }
 
+double resistance_Eigen(const vector<Triplet<double>> &K, int M, int from, int to) {
+	using namespace Eigen;
+	SparseMatrix<double, ColMajor> K1(M-1,M-1), K2(M-2,M-2);
+	SparseLU<SparseMatrix<double, ColMajor> > S1, S2;
+
+	//1
+	vector<Triplet<double>> coef1;
+	for(const auto & t : K) {
+		if(t.col() != to && t.row() != from) {
+			
+			coef1.push_back(Triplet<double>(t.row() - (t.row() > from), t.col() - (t.col() > to), t.value()));
+		}
+	}
+	//for(auto t : coef1) {
+	//	cout << t.row() <<'\t' << t.col() << '\t' << t.value() << endl;
+	//}
+	K1.setFromTriplets(coef1.begin(), coef1.end());
+	//cout << K1 << endl;
+	S1.analyzePattern(K1); S1.factorize(K1);
+	//cout << S1.lastErrorMessage() << endl;
+	//cout << "d1" << endl;
+	double d1 = S1.logAbsDeterminant();
+	//2
+	vector<Triplet<double>> coef2;
+	for(const auto & t: K) {
+		if(t.col() != to && t.row() != from && t.col() != from && t.row() != to) {
+			int nrow = t.row() - (t.row() > from) - (t.row() > to);
+			int ncol = t.col() - (t.col() > from) - (t.col() > to);
+			coef2.push_back(Triplet<double>(nrow, ncol, t.value()));
+		}
+	}
+	K2.setFromTriplets(coef2.begin(), coef2.end());
+	S2.analyzePattern(K2); S2.factorize(K2);
+	//cout << "d2" << endl;
+	double d2 = S2.logAbsDeterminant();
+	//cout <<"dets: "<< d1 << '\t' << d2 << endl;
+	return exp(d2-d1);
+}
 
 struct point3d {
 	int x,y,z;
@@ -461,7 +541,7 @@ bool bfs3d(vector<vector<vector<char>>> &material) {
 	return false;
 }
 
-int main(int argc, char** argv) {
+int main2(int argc, char** argv) {
 	
 	int N = 200;
 	int repeat = 10000;
@@ -503,58 +583,88 @@ int main(int argc, char** argv) {
 
 
 }
-int main2(int argc, char**argv) {
+int main(int argc, char**argv) {
 	int total = 10;
 	int E = 1;
+	int repeat = 100;
+	double start = 0.6;
+	double finish = 0.7;
+	double step = 0.01;
+	string filename = "logR";
 	if(argc > 1) {
 		N = atoi(argv[1]);
 	}
-	if(argc > 3) {
-		total = atoi(argv[3]);
-	}
 	if(argc > 2) {
-		E = atoi(argv[2]);
+		repeat = atoi(argv[2]);
 	}
+	if(argc > 3) {
+		start = atof(argv[3]);
+	}
+	if(argc > 4) {
+		finish = atof(argv[4]);
+	}
+	if(argc > 5) {
+		step = atof(argv[5]);
+	}
+	if(argc > 6) {
+		E = atoi(argv[6]);
+	}
+	if(argc > 7) {
+		filename = argv[7];
+	}
+	//if(argc > 3) {
+	//	E = atoi(argv[2]);
+	//}
+	
+	
 	int Nx = N, Ny = N;
 	vector<vector<int>> mat;
 	mat.resize(Ny);
 	for(auto& d1: mat) d1.resize(Nx);
 	int fails = 0;
-	do {
-		fill2d(mat, total, E);
-		auto mat2 = mat;
-	
-		cout <<bfs2d(mat2) << ' ' <<  fails++ << endl;
-	} while(!wave_forward2d(mat));
+	ofstream F(filename + to_string(E) + "_" + to_string(N) + "_"+ to_string(repeat) + "_" +  to_string(start) + "_" + to_string(finish) + ".txt");
+	for(double occ = start; occ <= finish; occ += step) {
+		double Caverage = 0;
+		int off_stat = 0;
+		for(int i = 0; i < repeat; i++) {
+			simple_fill2d(mat, occ);
+			auto mat2 = mat;
+			double R;
+			if(!wave_forward2d(mat)) {
+				Caverage += 0;
+				continue;
+			}
 
-	
-	printmat(mat, L);
+			
+			//printmat(mat, L);
 
-	wave_backward2d(mat);
+			wave_backward2d(mat);
 
-	printmat(mat, L);
+			//printmat(mat, L);
 
-	hash_graph2d graph = make_graph2d(mat);
-	point2d start_point { -1, -1};
-	point2d end_point {mat.size(), mat.size() };
-	auto relaxed_graph = relax_graph2d(graph,start_point, end_point);
-	/*
-	for(const auto& p : relaxed_graph) {
-		L << '{' << p.first.x << ' ' << p.first.y << "} : \n";
-		for(const auto& s : p.second) {
-			L << "\t{" << s.first.x << ' ' << s.first.y << "} " << s.second << endl;
+			hash_graph2d graph = make_graph2d(mat);
+			point2d start_point { -1, -1};
+			point2d end_point {mat.size(), mat.size() };
+			auto relaxed_graph = relax_graph2d(graph,start_point, end_point);
+			auto result = laplacian_matrix2d_Eigen(relaxed_graph);
+			//auto result = laplacian_matrix2d(relaxed_graph);
+			//cout << graph.size() << endl;
+			//cout << relaxed_graph.size() << endl;
+			if(result.second.size() == 2) {
+				R = 1/result.first[0].value();
+			}
+			//else R = resistance(result.first, result.second[start_point], result.second[end_point]);
+			else R = resistance_Eigen(result.first, relaxed_graph.size(), result.second[start_point], result.second[end_point]);
+			double C = 1/R;
+			if(C <= 1 && C > 0) 
+			Caverage += C;
+			else off_stat++;	
+			//cout << "R = " << R << endl;
 		}
-	}	*/
-	auto result = laplacian_matrix2d(relaxed_graph);
-	double R;
-	cout << graph.size() << endl;
-	cout << relaxed_graph.size() << endl;
-	if(result.second.size() == 2) {
-		R = 1/result.first[0][0];
+		Caverage /= (repeat-off_stat);
+		F << occ << '\t' << Caverage << endl;
+		cout << occ << '\t' << Caverage <<'\t' << off_stat<<  endl;
 	}
-	else R = resistance(result.first, result.second[start_point], result.second[end_point]);
-	cout << "R = " << R << endl;
-	
 }
 
 

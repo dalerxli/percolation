@@ -50,14 +50,9 @@ template<typename T> void simple_fill2d(vector<vector<T>>& material, double dens
 	}
 //	cout << _ones << ' ';
 }
-
-void fill2d(vector<vector<int>>& material, double occ, int E) {
-	int N = material.size() * material[0].size() * (occ / E);
-	fill2d(material, N, E);
-}
-
-void fill2d(vector<vector<int>>& material, int N, int E) {
-	if(E == 1) return simple_fill2d(material, double(N)/material.size()/material[0].size());	
+void _fill2d(vector<vector<int>>& material, int N, int E) {
+	if(E == 1) return simple_fill2d(material, double(N)/material.size()/material[0].size());
+		
 	int Y = material.size(), X = material[0].size();
 	for(int y = 0; y < Y; y++) for(int x = 0; x < X; x++) material[x][y] = FREE;
 	int x,y;
@@ -76,6 +71,14 @@ void fill2d(vector<vector<int>>& material, int N, int E) {
 		}
 	}
 }
+void fill2d(vector<vector<int>>& material, double occ, int E) {
+	int N = material.size() * material[0].size() * (occ / E);
+	//cout << material.size() << ' ' << material[0].size() << ' ' << occ << ' ' << E << endl;
+	//cout << N << endl;
+	_fill2d(material, N, E);
+}
+
+
 void simple_fill3d(vector<vector<vector<char>>>& material, double density) {
 	
 	for(auto& d2 : material)
@@ -616,7 +619,7 @@ int main(int argc, char**argv) {
 	//	E = atoi(argv[2]);
 	//}
 	
-	
+	ofstream L("log0.txt");
 	int Nx = N, Ny = N;
 	vector<vector<int>> mat;
 	mat.resize(Ny);
@@ -627,7 +630,8 @@ int main(int argc, char**argv) {
 		double Caverage = 0;
 		int off_stat = 0;
 		for(int i = 0; i < repeat; i++) {
-			simple_fill2d(mat, occ);
+			//L << start << ' ' << finish << ' ' << occ << endl;
+			fill2d(mat, occ, E);
 			auto mat2 = mat;
 			double R;
 			if(!wave_forward2d(mat)) {
@@ -660,10 +664,11 @@ int main(int argc, char**argv) {
 			Caverage += C;
 			else off_stat++;	
 			//cout << "R = " << R << endl;
+			double progress = (occ - start)/(finish - start)*100 + step/(finish - start)*i/repeat*100;
+			cout << progress << '%' << '\t' << occ << '\t' << Caverage <<'\t' << off_stat<<  endl;
 		}
 		Caverage /= (repeat-off_stat);
 		F << occ << '\t' << Caverage << endl;
-		cout << occ << '\t' << Caverage <<'\t' << off_stat<<  endl;
 	}
 }
 

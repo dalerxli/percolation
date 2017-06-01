@@ -39,7 +39,7 @@ pair<int,int> random_dxdy() {
 
 
 
-template<typename T> void simple_fill2d(vector<vector<T>>& material, double density) {
+template<typename T> double simple_fill2d(vector<vector<T>>& material, double density) {
 	unsigned int max = rnd.max();
 	int _ones = 0;
 	for(auto& d1 : material) 
@@ -48,34 +48,55 @@ template<typename T> void simple_fill2d(vector<vector<T>>& material, double dens
 		ones += (d0t == OCCUPIED);
 		_ones += (d0t == OCCUPIED);
 	}
+	return density;
 //	cout << _ones << ' ';
 }
-void _fill2d(vector<vector<int>>& material, int N, int E) {
-	if(E == 1) return simple_fill2d(material, double(N)/material.size()/material[0].size());
+
+double _fill2d(vector<vector<int>>& material, int N, int E, bool alternative = false) {
+	//if(E == 1) return simple_fill2d(material, double(N)/material.size()/material[0].size());
 		
 	int Y = material.size(), X = material[0].size();
 	for(int y = 0; y < Y; y++) for(int x = 0; x < X; x++) material[x][y] = FREE;
 	int x,y;
 	int dx, dy;
-	for(int i =0 ; i < N; i++) {
-		x = rnd() % X, y = rnd() % Y;
-		
-		do {
-			auto p = random_dxdy();
-			dx = p.first * (E-1), dy = p.second * (E-1);
-		} while(x + dx >= X || x + dx < 0 || y + dy >= Y || y + dy < 0  );
-		dx /= E-1;
-		dy /= E-1;
-		for(int j = 0; j < E; j++) {
-			material[y + j*dy][x + j*dx] = OCCUPIED;
+	if(E == 1) {
+		for(int i = 0; i < N; i++) {
+			x = rnd() % X, y = rnd() % Y;
+			material[x][y] = OCCUPIED;
 		}
 	}
+	else for(int i =0 ; i < N; i++) {
+		x = rnd() % X, y = rnd() % Y;
+		if(alternative) {
+			auto p = random_dxdy();
+			for(int j = 0; j < E; j++) {
+				int dx = j*p.first, dy = j*p.second;
+				if(x + dx < X && x + dx >= 0 && y + dy < Y && y + dy >= 0) material[y+dy][x+dx] = OCCUPIED;
+			}
+		}
+		else {
+			do {
+				auto p = random_dxdy();
+				dx = p.first * (E-1), dy = p.second * (E-1);
+			} while(x + dx >= X || x + dx < 0 || y + dy >= Y || y + dy < 0  );
+			dx /= E-1;
+			dy /= E-1;
+			//cout << dx << ' ' << dy << endl;
+			for(int j = 0; j < E; j++) {
+				material[y + j*dy][x + j*dx] = OCCUPIED;
+			}
+		}
+		
+	}
+	double real_occ = 0;
+	for(const auto& d1 : material) for(auto d0 : d1 ) real_occ += (d0 == OCCUPIED);
+	return real_occ / material.size() / material[0].size();
 }
-void fill2d(vector<vector<int>>& material, double occ, int E) {
+double fill2d(vector<vector<int>>& material, double occ, int E, bool alternative = false) {
 	int N = material.size() * material[0].size() * (occ / E);
 	//cout << material.size() << ' ' << material[0].size() << ' ' << occ << ' ' << E << endl;
 	//cout << N << endl;
-	_fill2d(material, N, E);
+	return _fill2d(material, N, E, alternative);
 }
 
 
@@ -586,6 +607,8 @@ int main2(int argc, char** argv) {
 
 
 }
+#define RESISTANCE 1
+#define PERCOLATION 0
 int main(int argc, char**argv) {
 	int total = 10;
 	int E = 1;
@@ -593,7 +616,8 @@ int main(int argc, char**argv) {
 	double start = 0.6;
 	double finish = 0.7;
 	double step = 0.01;
-	string filename = "logR";
+	string filename = "logAR";
+	int mode = RESISTANCE;	
 	if(argc > 1) {
 		N = atoi(argv[1]);
 	}
@@ -613,62 +637,86 @@ int main(int argc, char**argv) {
 		E = atoi(argv[6]);
 	}
 	if(argc > 7) {
-		filename = argv[7];
+		mode = atoi(argv[7]);
+	}
+	if(argc > 8) {
+		filename = argv[8];
 	}
 	//if(argc > 3) {
 	//	E = atoi(argv[2]);
 	//}
-	
+	cout << mode << endl;
 	ofstream L("log0.txt");
 	int Nx = N, Ny = N;
 	vector<vector<int>> mat;
 	mat.resize(Ny);
 	for(auto& d1: mat) d1.resize(Nx);
 	int fails = 0;
-	ofstream F(filename + to_string(E) + "_" + to_string(N) + "_"+ to_string(repeat) + "_" +  to_string(start) + "_" + to_string(finish) + ".txt");
+	if(mode == PERCOLATION) {
+		filename = "logPerc";
+	}
+	string fullname = filename + to_string(E) + "_" + to_string(N) + "_"+ to_string(repeat) + "_" +  to_string(start) + "_" + to_string(finish) + ".txt";
+	
+	ofstream F(fullname);
 	for(double occ = start; occ <= finish; occ += step) {
-		double Caverage = 0;
-		int off_stat = 0;
-		for(int i = 0; i < repeat; i++) {
-			//L << start << ' ' << finish << ' ' << occ << endl;
-			fill2d(mat, occ, E);
-			auto mat2 = mat;
-			double R;
-			if(!wave_forward2d(mat)) {
-				Caverage += 0;
-				continue;
+		if(mode == RESISTANCE) {
+			double Caverage = 0;
+			int off_stat = 0;
+			double occ_average = 0;
+			for(int i = 0; i < repeat; i++) {
+				//L << start << ' ' << finish << ' ' << occ << endl;
+				double real_occ = fill2d(mat, occ, E, true);
+				occ_average+= real_occ;
+				auto mat2 = mat;
+				double R;
+				if(!wave_forward2d(mat)) {
+					Caverage += 0;
+					//continue;
+				}
+				else {
+				
+					//printmat(mat, L);
+
+					wave_backward2d(mat);
+
+					//printmat(mat, L);
+
+					hash_graph2d graph = make_graph2d(mat);
+					point2d start_point { -1, -1};
+					point2d end_point {mat.size(), mat.size() };
+					auto relaxed_graph = relax_graph2d(graph,start_point, end_point);
+					auto result = laplacian_matrix2d_Eigen(relaxed_graph);
+					//auto result = laplacian_matrix2d(relaxed_graph);
+					//cout << graph.size() << endl;
+					//cout << relaxed_graph.size() << endl;
+					if(result.second.size() == 2) {
+						R = 1/result.first[0].value();
+					}
+					//else R = resistance(result.first, result.second[start_point], result.second[end_point]);
+					else R = resistance_Eigen(result.first, relaxed_graph.size(), result.second[start_point], result.second[end_point]);
+					double C = 1/R;
+					if(C <= 1 && C > 0) 
+					Caverage += C;
+					else off_stat++;
+				}	
+				//cout << "R = " << R << endl;
 			}
-
-			
-			//printmat(mat, L);
-
-			wave_backward2d(mat);
-
-			//printmat(mat, L);
-
-			hash_graph2d graph = make_graph2d(mat);
-			point2d start_point { -1, -1};
-			point2d end_point {mat.size(), mat.size() };
-			auto relaxed_graph = relax_graph2d(graph,start_point, end_point);
-			auto result = laplacian_matrix2d_Eigen(relaxed_graph);
-			//auto result = laplacian_matrix2d(relaxed_graph);
-			//cout << graph.size() << endl;
-			//cout << relaxed_graph.size() << endl;
-			if(result.second.size() == 2) {
-				R = 1/result.first[0].value();
-			}
-			//else R = resistance(result.first, result.second[start_point], result.second[end_point]);
-			else R = resistance_Eigen(result.first, relaxed_graph.size(), result.second[start_point], result.second[end_point]);
-			double C = 1/R;
-			if(C <= 1 && C > 0) 
-			Caverage += C;
-			else off_stat++;	
-			//cout << "R = " << R << endl;
-			double progress = (occ - start)/(finish - start)*100 + step/(finish - start)*i/repeat*100;
-			cout << progress << '%' << '\t' << occ << '\t' << Caverage <<'\t' << off_stat<<  endl;
+			Caverage /= (repeat-off_stat);
+			F << occ << '\t' << Caverage << '\t' << occ_average/repeat << endl;
+			double progress = (occ - start)/(finish - start)*100;// + step/(finish - start)*i/repeat*100;
+			cout << progress << '%' << '\t' << occ << '\t' << Caverage <<'\t' << occ_average/repeat<<  endl;
 		}
-		Caverage /= (repeat-off_stat);
-		F << occ << '\t' << Caverage << endl;
+		else {
+			double success = 0;
+			double occ_average = 0;
+			for(int i = 0;i < repeat; i++) {
+				occ_average += fill2d(mat, occ, E, true);
+				success += bfs2d(mat);
+			}
+			F << occ << '\t' << success/repeat << '\t' << occ_average/repeat << endl;
+			double progress = (occ - start)/(finish - start)*100;// + step/(finish - start)*i/repeat*100;
+			cout << progress << '%' << '\t' << occ << '\t' << success/repeat <<'\t' << occ_average/repeat<<  endl;
+		}
 	}
 }
 
